@@ -3,65 +3,93 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
-	"example/m/model"
-
-	"github.com/go-redis/redis"
 	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
+	"github.com/sashabaranov/go-openai"
 )
 
-func indexHandler(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("Welcome! Please hit the `/quote-of-the-day` API to get the quote of the day."))
+// Add cache structure
+type QuoteCache struct {
+	mutex sync.RWMutex
+	quote string
+	date  string
 }
 
-func quoteOfTheDayHandler(client *redis.Client) http.HandlerFunc {
+var cache = &QuoteCache{}
+
+type Response struct {
+	Message string `json:"message"`
+}
+
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
+
+func indexHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(Response{
+		Message: "Welcome! Please hit the `/quote-of-the-day` API to get the quote of the day.",
+	})
+}
+
+func quoteOfTheDayHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		currentTime := time.Now()
 		date := currentTime.Format("2006-01-02")
 
-		val, err := client.Get(date).Result()
-		if err == redis.Nil {
-			log.Println("Cache miss for date ", date)
-			quoteResp, err := getQuoteFromAPI()
-			if err != nil {
-				w.Write([]byte("Sorry! We could not get the Quote of the Day. Please try again."))
-				return
-			}
-			quote := quoteResp.Contents.Quotes[0].Quote
-			client.Set(date, quote, 24*time.Hour)
-			w.Write([]byte(quote))
-		} else {
+		cache.mutex.RLock()
+		if cache.date == date && cache.quote != "" {
 			log.Println("Cache Hit for date ", date)
-			w.Write([]byte(val))
+			json.NewEncoder(w).Encode(Response{Message: cache.quote})
+			cache.mutex.RUnlock()
+			return
 		}
+		cache.mutex.RUnlock()
+
+		// Cache miss - get new quote
+		log.Println("Cache miss for date ", date)
+		quote, err := getQuoteFromLLM()
+		if err != nil {
+			log.Println("Error getting quote from LLM: ", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(ErrorResponse{
+				Error: "Sorry! We could not get the Quote of the Day. Please try again.",
+			})
+			return
+		}
+
+		// Update cache
+		cache.mutex.Lock()
+		cache.quote = quote
+		cache.date = date
+		cache.mutex.Unlock()
+
+		json.NewEncoder(w).Encode(Response{Message: quote})
 	}
 }
 
 func main() {
-	// Create Redis Client
-	client := redis.NewClient(&redis.Options{
-		Addr:     getEnv("REDIS_URL", "localhost:6379"),
-		Password: getEnv("REDIS_PASSWORD", ""),
-		DB:       0,
-	})
-
-	_, err := client.Ping().Result()
+	// Load .env file at the start of main
+	err := godotenv.Load()
 	if err != nil {
-		log.Fatal(err)
+		log.Println("Warning: Error loading .env file:", err)
 	}
 
-	// Create Server and Route Handlers
 	r := mux.NewRouter()
 
 	r.HandleFunc("/", indexHandler)
-	r.HandleFunc("/quote-of-the-day", quoteOfTheDayHandler(client))
+	r.HandleFunc("/quote-of-the-day", quoteOfTheDayHandler())
+	r.HandleFunc("/clear-cache", clearCacheHandler()).Methods("POST")
 
 	srv := &http.Server{
 		Handler:      r,
@@ -72,7 +100,7 @@ func main() {
 
 	// Start Server
 	go func() {
-		log.Println("starting server...")
+		log.Println("Starting server on port 8080")
 		if err := srv.ListenAndServe(); err != nil {
 			log.Fatal(err)
 		}
@@ -98,23 +126,43 @@ func waitForShutdown(srv *http.Server) {
 	os.Exit(0)
 }
 
-func getQuoteFromAPI() (*model.QuoteResponse, error) {
-	API_URL := "http://quotes.rest/qod.json"
-	resp, err := http.Get(API_URL)
+func getQuoteFromLLM() (string, error) {
+	apiKey := getEnv("OPENAI_API_KEY", "")
+	if apiKey == "" {
+		return "", fmt.Errorf("OPENAI_API_KEY environment variable is not set")
+	}
+
+	client := openai.NewClient(apiKey)
+	ctx := context.Background()
+
+	resp, err := client.CreateChatCompletion(
+		ctx,
+		openai.ChatCompletionRequest{
+			Model: openai.GPT3Dot5Turbo,
+			Messages: []openai.ChatCompletionMessage{
+				{
+					Role: openai.ChatMessageRoleSystem,
+					Content: "You are a quote generator. Provide a single meaningful quote about life, " +
+						"success, or wisdom. Include the author. Keep it concise.",
+				},
+				{
+					Role:    openai.ChatMessageRoleUser,
+					Content: "Generate a quote of the day.",
+				},
+			},
+			MaxTokens: 100,
+		},
+	)
+
 	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	log.Println("Quote API Returned: ", resp.StatusCode, http.StatusText(resp.StatusCode))
-
-	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
-		quoteResp := &model.QuoteResponse{}
-		json.NewDecoder(resp.Body).Decode(quoteResp)
-		return quoteResp, nil
-	} else {
-		return nil, errors.New("Could not get quote from API")
+		return "", fmt.Errorf("OpenAI API error: %v", err)
 	}
 
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("no response from OpenAI")
+	}
+
+	return resp.Choices[0].Message.Content, nil
 }
 
 func getEnv(key, defaultValue string) string {
@@ -123,4 +171,18 @@ func getEnv(key, defaultValue string) string {
 		return defaultValue
 	}
 	return value
+}
+
+func clearCacheHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		cache.mutex.Lock()
+		cache.quote = ""
+		cache.date = ""
+		cache.mutex.Unlock()
+
+		json.NewEncoder(w).Encode(Response{
+			Message: "Cache cleared successfully",
+		})
+	}
 }
