@@ -1,38 +1,36 @@
-build:
-	@echo "Building and starting containers with docker compose..."
-	docker compose up --build
+# Development
+run-local:
+	@echo "Running locally..."
+	go run src/main.go
 
 run:
-	@echo "Starting containers with docker compose..."
-	docker compose up
+	@echo "Running..."
+	chmod +x bin/qotd
+	bin/qotd
 
-stop:
-	@echo "Stopping containers..."
-	docker compose down
+test:
+	@echo "Running tests..."
+	go test -v ./src/test/... ./src/internal/...
 
-destroy:
-	@echo "Stopping containers and removing volumes..."
-	docker compose down -v
+test-coverage:
+	@echo "Running tests with coverage..."
+	go test -v -cover ./test/... ./src/internal/...
+	go test -coverprofile=coverage.out ./test/... ./src/internal/...
+	go tool cover -html=coverage.out -o coverage.html
 
-destroy-hard: stop destroy
-	@echo "Performing hard destroy - removing all containers and volumes..."
-	docker compose rm -v
-	docker rm -f $(docker ps -a -q)
-	docker volume rm $(docker volume ls -q)
+build:
+	@echo "Building..."
+	mkdir -p bin
+	go build -o bin/qotd src/main.go
 
-rebuild: destroy build
-r: rebuild
+clean:
+	@echo "Cleaning build artifacts..."
+	rm -rf bin/
+	rm -f coverage.out coverage.html
 
-nuke:
-	@echo "WARNING: Nuclear option - removing all Docker containers, images, networks and volumes..."
-	docker stop $$(docker ps -a -q)
-	docker rm $$(docker ps -a -q)
-	docker network prune -f
-	docker rmi -f $$(docker images --filter dangling=true -qa)
-	docker volume rm $$(docker volume ls --filter dangling=true -q)
-	docker rmi -f $$(docker images -a -q)
-	docker system prune -a
-
+# Utility commands
 clear-cache:
 	@echo "Clearing quote cache..."
 	curl -X POST http://localhost:8080/clear-cache
+
+.PHONY: run-local test test-coverage build clean clear-cache

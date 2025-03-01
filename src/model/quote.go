@@ -14,13 +14,15 @@ type QuoteData struct {
 }
 
 type QuoteResponse struct {
-	Success  APISuccess   `json:"success"`
-	Contents QuoteContent `json:"contents"`
+	Contents Contents `json:"contents"`
 }
 
-type QuoteContent struct {
-	Quotes    []QuoteData `json:"quotes"`
-	Copyright string      `json:"copyright"`
+type Contents struct {
+	Quotes []Quote `json:"quotes"`
+}
+
+type Quote struct {
+	Quote string `json:"quote"`
 }
 
 type APISuccess struct {

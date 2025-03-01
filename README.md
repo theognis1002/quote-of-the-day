@@ -37,6 +37,8 @@ A simple REST API service that provides AI-generated inspirational quotes. Built
 - `make rebuild` - Rebuild all containers
 - `make nuke` - Complete cleanup of all Docker resources
 - `make clear-cache` - Clear the quote cache to force a new quote generation
+- `make test` - Run all tests
+- `make test-coverage` - Run tests with coverage report
 
 ## API Endpoints
 
@@ -88,3 +90,19 @@ All endpoints return JSON responses. In case of errors, the response will includ
   "error": "Error message here"
 }
 ```
+
+## Development
+
+### Testing
+
+The project includes comprehensive test coverage for all API endpoints and the cache mechanism. To run the tests:
+
+```bash
+# Run all tests
+make test
+
+# Run tests with coverage report
+make test-coverage
+```
+
+The coverage report will be generated as an HTML file (`coverage.html`) that you can open in your browser to see detailed coverage information.
