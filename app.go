@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gorilla/mux"
+	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/sashabaranov/go-openai"
 )
@@ -26,56 +25,54 @@ type QuoteCache struct {
 
 var cache = &QuoteCache{}
 
-type Response struct {
-	Message string `json:"message"`
-}
-
-type ErrorResponse struct {
-	Error string `json:"error"`
-}
-
-func indexHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(Response{
-		Message: "Welcome! Please hit the `/quote-of-the-day` API to get the quote of the day.",
+func indexHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Welcome! Please hit the `/quote-of-the-day` API to get the quote of the day.",
 	})
 }
 
-func quoteOfTheDayHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		currentTime := time.Now()
-		date := currentTime.Format("2006-01-02")
+func quoteOfTheDayHandler(c *gin.Context) {
+	currentTime := time.Now()
+	date := currentTime.Format("2006-01-02")
 
-		cache.mutex.RLock()
-		if cache.date == date && cache.quote != "" {
-			log.Println("Cache Hit for date ", date)
-			json.NewEncoder(w).Encode(Response{Message: cache.quote})
-			cache.mutex.RUnlock()
-			return
-		}
+	cache.mutex.RLock()
+	if cache.date == date && cache.quote != "" {
+		log.Println("Cache Hit for date ", date)
 		cache.mutex.RUnlock()
-
-		// Cache miss - get new quote
-		log.Println("Cache miss for date ", date)
-		quote, err := getQuoteFromLLM()
-		if err != nil {
-			log.Println("Error getting quote from LLM: ", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(ErrorResponse{
-				Error: "Sorry! We could not get the Quote of the Day. Please try again.",
-			})
-			return
-		}
-
-		// Update cache
-		cache.mutex.Lock()
-		cache.quote = quote
-		cache.date = date
-		cache.mutex.Unlock()
-
-		json.NewEncoder(w).Encode(Response{Message: quote})
+		c.JSON(http.StatusOK, gin.H{"message": cache.quote})
+		return
 	}
+	cache.mutex.RUnlock()
+
+	// Cache miss - get new quote
+	log.Println("Cache miss for date ", date)
+	quote, err := getQuoteFromLLM()
+	if err != nil {
+		log.Println("Error getting quote from LLM: ", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Sorry! We could not get the Quote of the Day. Please try again.",
+		})
+		return
+	}
+
+	// Update cache
+	cache.mutex.Lock()
+	cache.quote = quote
+	cache.date = date
+	cache.mutex.Unlock()
+
+	c.JSON(http.StatusOK, gin.H{"message": quote})
+}
+
+func clearCacheHandler(c *gin.Context) {
+	cache.mutex.Lock()
+	cache.quote = ""
+	cache.date = ""
+	cache.mutex.Unlock()
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Cache cleared successfully",
+	})
 }
 
 func main() {
@@ -85,23 +82,23 @@ func main() {
 		log.Println("Warning: Error loading .env file:", err)
 	}
 
-	r := mux.NewRouter()
+	// Create Gin router
+	r := gin.Default() // This includes logging and recovery middleware
 
-	r.HandleFunc("/", indexHandler)
-	r.HandleFunc("/quote-of-the-day", quoteOfTheDayHandler())
-	r.HandleFunc("/clear-cache", clearCacheHandler()).Methods("POST")
+	// Routes
+	r.GET("/", indexHandler)
+	r.GET("/quote-of-the-day", quoteOfTheDayHandler)
+	r.POST("/clear-cache", clearCacheHandler)
 
 	srv := &http.Server{
-		Handler:      r,
-		Addr:         ":8080",
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		Handler: r,
+		Addr:    ":8080",
 	}
 
 	// Start Server
 	go func() {
 		log.Println("Starting server on port 8080")
-		if err := srv.ListenAndServe(); err != nil {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}()
@@ -111,19 +108,19 @@ func main() {
 }
 
 func waitForShutdown(srv *http.Server) {
-	interruptChan := make(chan os.Signal, 1)
-	signal.Notify(interruptChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
 
-	// Block until we receive our signal.
-	<-interruptChan
-
-	// Create a deadline to wait for.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	srv.Shutdown(ctx)
 
-	log.Println("Shutting down")
-	os.Exit(0)
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatal("Server forced to shutdown:", err)
+	}
+
+	log.Println("Server exiting")
 }
 
 func getQuoteFromLLM() (string, error) {
@@ -171,18 +168,4 @@ func getEnv(key, defaultValue string) string {
 		return defaultValue
 	}
 	return value
-}
-
-func clearCacheHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		cache.mutex.Lock()
-		cache.quote = ""
-		cache.date = ""
-		cache.mutex.Unlock()
-
-		json.NewEncoder(w).Encode(Response{
-			Message: "Cache cleared successfully",
-		})
-	}
 }
