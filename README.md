@@ -1,53 +1,48 @@
+![Two ancient masters playing Go under a tree](image.png)
+
+> "Life is like the game of Go. The board is empty at the beginning, but gradually fills with possibilities - and only the wise know when to play and when to pass."
+> — Ancient Chinese Proverb
+
 # Quote of the Day API
 
-A simple REST API service that provides AI-generated inspirational quotes. Built with Go, Docker, and modern DevOps practices.
+A simple REST API service that provides AI-generated inspirational quotes using Go and OpenAI's GPT API.
 
 ## Technologies Used
 
 - Go (Golang)
-- Docker & Docker Compose
 - OpenAI GPT API
-- Make (for simplified commands)
+- Gin Web Framework
 
 ## Requirements
 
-- Docker (latest version)
-- Docker Compose v2+
-- Make (optional, but recommended)
+- Go 1.x
 - OpenAI API key
 
-## Getting Started
-
-### Setup & Installation
+## Setup & Installation
 
 1. Clone this repository
-2. Create a `.env` file in the root directory with your OpenAI API key:
+2. Create a `.env` file in the root directory:
    ```
    OPENAI_API_KEY=your-api-key-here
    ```
-3. Run `make build` to build and start the containers
-   - Alternatively: `docker compose up --build`
+3. Run `make build` to build the application
+4. Run `make run` to start the server
 
-### Available Make Commands
+## Available Commands
 
-- `make build` - Build and start containers
-- `make run` - Start existing containers
-- `make stop` - Stop running containers
-- `make destroy` - Stop containers and remove volumes
-- `make rebuild` - Rebuild all containers
-- `make nuke` - Complete cleanup of all Docker resources
-- `make clear-cache` - Clear the quote cache to force a new quote generation
+- `make build` - Build the application
+- `make run` - Run the built binary
+- `make run-local` - Run directly with Go
 - `make test` - Run all tests
 - `make test-coverage` - Run tests with coverage report
+- `make clean` - Clean build artifacts
+- `make clear-cache` - Clear the quote cache
 
 ## API Endpoints
 
-### Root Endpoint
+### GET /
 
-- **URL**: `/`
-- **Method**: `GET`
-- **Description**: Welcome message
-- **Response Format**: JSON
+Welcome message and API instructions
 
 ```json
 {
@@ -55,12 +50,9 @@ A simple REST API service that provides AI-generated inspirational quotes. Built
 }
 ```
 
-### Quote of the Day
+### GET /quote-of-the-day
 
-- **URL**: `/quote-of-the-day`
-- **Method**: `GET`
-- **Description**: Returns an AI-generated inspirational quote (cached daily)
-- **Response Format**: JSON
+Returns an AI-generated inspirational quote (cached daily)
 
 ```json
 {
@@ -68,12 +60,9 @@ A simple REST API service that provides AI-generated inspirational quotes. Built
 }
 ```
 
-### Clear Cache
+### POST /clear-cache
 
-- **URL**: `/clear-cache`
-- **Method**: `POST`
-- **Description**: Clears the current quote cache, forcing a new quote generation on next request
-- **Response Format**: JSON
+Clears the current quote cache
 
 ```json
 {
@@ -81,9 +70,7 @@ A simple REST API service that provides AI-generated inspirational quotes. Built
 }
 ```
 
-## Error Handling
-
-All endpoints return JSON responses. In case of errors, the response will include an error message:
+## Error Response
 
 ```json
 {
@@ -95,14 +82,13 @@ All endpoints return JSON responses. In case of errors, the response will includ
 
 ### Testing
 
-The project includes comprehensive test coverage for all API endpoints and the cache mechanism. To run the tests:
+Run tests:
 
 ```bash
-# Run all tests
 make test
 
-# Run tests with coverage report
+# With coverage report
 make test-coverage
 ```
 
-The coverage report will be generated as an HTML file (`coverage.html`) that you can open in your browser to see detailed coverage information.
+Coverage report is generated as `coverage.html`.
